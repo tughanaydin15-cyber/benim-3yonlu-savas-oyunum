@@ -206,7 +206,6 @@ function spawnEnemy() {
       hp: 1, color: '#b388ff', dir: 'left' };
   }
   let speedMult = hasEvent('slowmo') ? 0.4 : 1;
-    let speedMult = hasEvent('slowmo') ? 0.4 : 1;
   e.speed *= Math.min(1 + difficulty * 0.05, 3) * speedMult;
   enemies.push(e);
 }
