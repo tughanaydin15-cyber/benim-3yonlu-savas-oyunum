@@ -206,4 +206,358 @@ function spawnEnemy() {
       hp: 1, color: '#b388ff', dir: 'left' };
   }
   let speedMult = hasEvent('slowmo') ? 0.4 : 1;
-  e.speed *= Math.min(1 + difficulty * 0.05,
+    let speedMult = hasEvent('slowmo') ? 0.4 : 1;
+  e.speed *= Math.min(1 + difficulty * 0.05, 3) * speedMult;
+  enemies.push(e);
+}
+
+function spawnBoss() {
+  const maxHp = 20 + bossLevel * 10;
+  boss = {
+    x: W / 2, y: -60,
+    size: 50,
+    hp: maxHp, maxHp,
+    color: '#ff0055',
+    shootTimer: 60, t: 0
+  };
+  bossWarning = 150;
+  screenShake = 30;
+}
+
+function shoot() {
+  if (player.cooldown > 0) return;
+  const rapid = hasEvent('rapidFire');
+  player.cooldown = hasEvent('slowShoot') ? 30 : (rapid ? 5 : 12);
+  const color = hasEvent('doubleShot') ? '#ffaa00' : '#00e5ff';
+  if (hasEvent('doubleShot')) {
+    bullets.push({ x: player.x - 10, y: player.y - player.size, speed: 7, size: 4, color });
+    bullets.push({ x: player.x + 10, y: player.y - player.size, speed: 7, size: 4, color });
+  } else {
+    bullets.push({ x: player.x, y: player.y - player.size, speed: 7, size: 4, color });
+  }
+  spawnParticles(player.x, player.y - player.size, color, 2);
+}
+
+function damagePlayer() {
+  if (player.invuln > 0 || hasEvent('ghost')) return;
+  if (shieldActive) {
+    shieldActive = false;
+    player.invuln = 30;
+    spawnParticles(player.x, player.y, '#00e5ff', 25);
+    return;
+  }
+  player.hp--;
+  player.invuln = 90;
+  screenShake = 25;
+  spawnParticles(player.x, player.y, '#ff0000', 30);
+  if (player.hp <= 0) {
+    gameOver = true;
+    if (score > highScore) {
+      highScore = score; newRecord = true;
+      try { localStorage.setItem('highScore', highScore); } catch (e) {}
+    }
+  }
+}
+
+function updateParticles() {
+  particles = particles.filter(p => {
+    p.x += p.vx; p.y += p.vy; p.vx *= 0.98; p.vy *= 0.98; p.life--;
+    return p.life > 0;
+  });
+}
+
+function update() {
+  updateParticles();
+  if (bossWarning > 0) bossWarning--;
+  if (screenShake > 0) screenShake--;
+  if (eventAnnounceTimer > 0) eventAnnounceTimer--;
+
+  if (gameOver) return;
+
+  // --- olay süreleri ---
+  activeEvents = activeEvents.filter(ev => {
+    ev.remaining--;
+    if (ev.remaining <= 0) {
+      if (ev.id === 'reverseControls') controlsReversed = false;
+      if (ev.id === 'playerSlow') player.speed = player.baseSpeed;
+      if (ev.id === 'shrink') player.size = player.baseSize;
+      return false;
+    }
+    return true;
+  });
+
+  // --- skor olayları (her 500 puanda) ---
+  if (score >= nextEventAt) {
+    triggerRandomEvent();
+    nextEventAt += 500;
+  }
+
+  // --- boss (her 1000 puanda) ---
+  if (!boss && score >= nextBossAt) spawnBoss();
+  if (boss && score >= nextBossAt) nextBossAt += 1000;
+
+  // --- oyuncu hareketi ---
+  let dx = 0, dy = 0;
+  if (keys['a'] || keys['arrowleft']) dx -= 1;
+  if (keys['d'] || keys['arrowright']) dx += 1;
+  if (keys['w'] || keys['arrowup']) dy -= 1;
+  if (keys['s'] || keys['arrowdown']) dy += 1;
+  if (controlsReversed) { dx = -dx; dy = -dy; }
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.hypot(dx, dy);
+    player.x += (dx / len) * player.speed;
+    player.y += (dy / len) * player.speed;
+  }
+  player.x = Math.max(player.size, Math.min(W - player.size, player.x));
+  player.y = Math.max(player.size, Math.min(H - player.size, player.y));
+
+  if (keys[' ']) shoot();
+  if (player.cooldown > 0) player.cooldown--;
+  if (player.invuln > 0) player.invuln--;
+
+  // --- düşman üretimi ---
+  difficulty = 1 + Math.floor(score / 400);
+  if (!boss) {
+    spawnTimer--;
+    if (spawnTimer <= 0) {
+      spawnEnemy();
+      spawnTimer = Math.max(18, 70 - difficulty * 4);
+    }
+  }
+
+  // --- mermiler ---
+  bullets = bullets.filter(b => {
+    b.y -= b.speed;
+    if (b.y < -10) return false;
+    for (const e of enemies) {
+      if (dist(b, e) < e.size / 2 + b.size) {
+        e.hp--;
+        spawnParticles(b.x, b.y, e.color, 5);
+        if (e.hp <= 0) {
+          spawnParticles(e.x, e.y, e.color, 15);
+          score += hasEvent('doubleScore') ? 20 : 10;
+        }
+        return false;
+      }
+    }
+    if (boss && dist(b, boss) < boss.size / 2 + b.size) {
+      boss.hp--;
+      spawnParticles(b.x, b.y, boss.color, 5);
+      if (boss.hp <= 0) {
+        spawnParticles(boss.x, boss.y, boss.color, 60);
+        score += (300 + bossLevel * 200) * (hasEvent('doubleScore') ? 2 : 1);
+        boss = null;
+        bossLevel++;
+        screenShake = 40;
+      }
+      return false;
+    }
+    return true;
+  });
+  enemies = enemies.filter(e => e.hp > 0);
+
+  // --- düşman hareketi ve çarpışma ---
+  enemies = enemies.filter(e => {
+    e.x += e.dir === 'left' ? -e.speed : e.dir === 'right' ? e.speed : 0;
+    e.y += e.dir === 'down' ? e.speed : 0;
+    if (e.y > H + 40 || e.x < -40 || e.x > W + 40) return false;
+    if (dist(e, player) < e.size / 2 + player.size / 2) {
+      damagePlayer();
+      spawnParticles(e.x, e.y, e.color, 10);
+      return false;
+    }
+    return true;
+  });
+
+  // --- boss hareketi ve ateşi ---
+  if (boss) {
+    boss.t++;
+    if (boss.y < 90) boss.y += 1.5;
+    else boss.x = W / 2 + Math.sin(boss.t * 0.02) * (W / 2 - 80);
+    boss.shootTimer--;
+    if (boss.shootTimer <= 0) {
+      boss.shootTimer = Math.max(25, 70 - bossLevel * 8);
+      const ang = Math.atan2(player.y - boss.y, player.x - boss.x);
+      for (let i = -1; i <= 1; i++) {
+        bossBullets.push({
+          x: boss.x, y: boss.y + 20,
+          vx: Math.cos(ang + i * 0.25) * 3.5,
+          vy: Math.sin(ang + i * 0.25) * 3.5,
+          size: 6, color: '#ff0055'
+        });
+      }
+    }
+  }
+
+  // --- boss mermileri ---
+  bossBullets = bossBullets.filter(b => {
+    b.x += b.vx; b.y += b.vy;
+    if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) return false;
+    if (dist(b, player) < b.size + player.size / 2) {
+      damagePlayer();
+      return false;
+    }
+    return true;
+  });
+}
+
+function draw() {
+  ctx.save();
+  if (screenShake > 0) {
+    ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
+  }
+  ctx.clearRect(-50, -50, W + 100, H + 100);
+
+  // oyuncu
+  if (!(player.invuln > 0 && Math.floor(player.invuln / 5) % 2 === 0)) {
+    ctx.globalAlpha = hasEvent('ghost') ? 0.45 : 1;
+    ctx.fillStyle = '#00e5ff';
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y - player.size);
+    ctx.lineTo(player.x - player.size * 0.8, player.y + player.size * 0.8);
+    ctx.lineTo(player.x + player.size * 0.8, player.y + player.size * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if (shieldActive) {
+    ctx.strokeStyle = '#00e5ff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.size + 10, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // mermiler
+  for (const b of bullets) {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x - b.size / 2, b.y - b.size * 1.5, b.size, b.size * 3);
+  }
+  for (const b of bossBullets) {
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // düşmanlar
+  const invis = hasEvent('invisible');
+  for (const e of enemies) {
+    ctx.globalAlpha = invis ? 0.12 : 1;
+    ctx.fillStyle = e.color;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, e.size / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // boss
+  if (boss) {
+    ctx.fillStyle = boss.color;
+    ctx.fillRect(boss.x - boss.size / 2, boss.y - boss.size / 2, boss.size, boss.size);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 20px Segoe UI';
+    ctx.textAlign = 'center';
+    ctx.fillText('👾', boss.x, boss.y + 7);
+    // boss can barı
+    ctx.fillStyle = '#333';
+    ctx.fillRect(W / 2 - 150, 12, 300, 14);
+    ctx.fillStyle = '#ff0055';
+    ctx.fillRect(W / 2 - 150, 12, 300 * (boss.hp / boss.maxHp), 14);
+    ctx.strokeStyle = '#fff';
+    ctx.strokeRect(W / 2 - 150, 12, 300, 14);
+  }
+
+  // parçacıklar
+  for (const p of particles) {
+    ctx.globalAlpha = p.life / 30;
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+  }
+  ctx.globalAlpha = 1;
+
+  // sis olayı
+  if (hasEvent('fog')) {
+    const g = ctx.createRadialGradient(player.x, player.y, 60, player.x, player.y, 260);
+    g.addColorStop(0, 'rgba(10,10,26,0)');
+    g.addColorStop(1, 'rgba(10,10,26,0.95)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  // HUD
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px Segoe UI';
+  ctx.fillText('Skor: ' + score, 14, 30);
+  ctx.fillStyle = '#aaa';
+  ctx.font = '14px Segoe UI';
+  ctx.fillText('Rekor: ' + highScore, 14, 52);
+  for (let i = 0; i < player.maxHp; i++) {
+    ctx.fillStyle = i < player.hp ? '#ff3860' : '#442233';
+    ctx.font = '18px Segoe UI';
+    ctx.fillText('❤️', 14 + i * 24, 80);
+  }
+
+  // aktif olaylar
+  ctx.textAlign = 'right';
+  ctx.font = '13px Segoe UI';
+  activeEvents.forEach((ev, i) => {
+    ctx.fillStyle = ev.color;
+    ctx.fillText(ev.name + ' ' + Math.ceil(ev.remaining / 60) + 's', W - 14, 30 + i * 20);
+  });
+
+  // boss uyarısı
+  if (bossWarning > 0) {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = Math.floor(bossWarning / 10) % 2 === 0 ? '#ff0055' : '#fff';
+    ctx.font = 'bold 40px Segoe UI';
+    ctx.fillText('⚠️ BOSS GELİYOR ⚠️', W / 2, H / 2 - 40);
+  }
+
+  // olay duyurusu
+  if (eventAnnounce && eventAnnounceTimer > 0) {
+    ctx.globalAlpha = Math.min(1, eventAnnounceTimer / 40);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = eventAnnounce.color;
+    ctx.font = 'bold 32px Segoe UI';
+    ctx.fillText(eventAnnounce.name, W / 2, H / 2 - 80);
+    ctx.font = '16px Segoe UI';
+    ctx.fillStyle = '#fff';
+    ctx.fillText(eventAnnounce.desc, W / 2, H / 2 - 52);
+    ctx.globalAlpha = 1;
+  }
+
+  // oyun bitti ekranı
+  if (gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff3860';
+    ctx.font = 'bold 48px Segoe UI';
+    ctx.fillText('OYUN BİTTİ', W / 2, H / 2 - 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = '22px Segoe UI';
+    ctx.fillText('Skor: ' + score, W / 2, H / 2 + 5);
+    if (newRecord) {
+      ctx.fillStyle = '#ffff00';
+      ctx.font = 'bold 22px Segoe UI';
+      ctx.fillText('🎉 YENİ REKOR! 🎉', W / 2, H / 2 + 40);
+    }
+    ctx.fillStyle = '#aaa';
+    ctx.font = '18px Segoe UI';
+    ctx.fillText("R'ye basarak yeniden başla", W / 2, H / 2 + 80);
+  }
+
+  ctx.restore();
+}
+
+function loop() {
+  update();
+  draw();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
