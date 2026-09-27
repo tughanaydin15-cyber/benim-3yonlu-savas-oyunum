@@ -69,27 +69,32 @@ const GOOD_EVENTS = [
 
 const BAD_EVENTS = [
   { id: 'reverseControls', name: '🌀 TERS KONTROL',   duration: 480, color: '#ff0000', desc: 'Kontroller ters döndü!', type: 'bad' },
-  { id: 'fog',             name: '🌫️ SİS',            duration: 600, color: '#666666', desc: 'Görüş alanın azaldı!', type: 'bad' },
-  { id: 'playerSlow',      name: '🐌 YAVAŞLAMA',      duration: 420, color: '#990000', desc: 'Hareketin yavaşladı!', type: 'bad' },
-  { id: 'damage',          name: '💔 CAN -1',          duration: 1,   color: '#cc0000', desc: '1 can kaybettin!', type: 'bad' },
-  { id: 'shrink',          name: '🎯 KÜÇÜLME',        duration: 600, color: '#ff3366', desc: 'Boyutun küçüldü!', type: 'bad' },
-  { id: 'enemyRain',       name: '🌪️ DÜŞMAN YAĞMURU', duration: 1,   color: '#ff6600', desc: 'Çok sayıda düşman!', type: 'bad' },
-  { id: 'slowShoot',       name: '🔇 YAVAŞ ATEŞ',     duration: 480, color: '#996600', desc: 'Ateş hızın düştü!', type: 'bad' },
-  { id: 'invisible',       name: '👁️ GÖRÜNMEZLİK',    duration: 480, color: '#333333', desc: 'Düşmanlar görünmez!', type: 'bad' }
-];
-
-let activeEvents = [], shieldActive = false;
-let nextEventAt = 500, eventAnnounce = null, eventAnnounceTimer = 0;
-let controlsReversed = false;
-
-const keys = {};
-window.addEventListener('keydown', e => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key === ' ') e.preventDefault();
-  if (gameOver && e.key.toLowerCase() === 'r') resetGame();
-});
-window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-
+                 type: "sandbox-runtime-error",
+                payload: {
+                  message: String(event.message).slice(0, 500),
+                  filename: event.filename || "",
+                  lineno: event.lineno || 0,
+                  colno: event.colno || 0,
+                  stack:
+                    event.error && event.error.stack
+                      ? String(event.error.stack).slice(0, 2000)
+                      : ""
+                }
+              },
+              "*"
+            );
+          } catch (e) {
+            /* Reporting failure does not affect page operation */
+          }
+        });
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
 function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
 
 function spawnParticles(x, y, color, count = 10) {
