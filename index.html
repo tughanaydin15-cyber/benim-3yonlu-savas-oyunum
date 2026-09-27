@@ -1,567 +1,758 @@
-<!DOCTYPE html>
-<html lang="tr">
-<head>
-<meta charset="UTF-8">
-<title>Üç Yönlü Savaş - İyi & Kötü Olaylar</title>
-<style>
-  body {
-    margin: 0;
-    background: #0a0a1a;
-    color: #fff;
-    font-family: 'Segoe UI', sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-  }
-  h1 { color: #00e5ff; text-shadow: 0 0 10px #00e5ff; }
-  canvas {
-    background: #111;
-    border: 2px solid #00e5ff;
-    border-radius: 8px;
-    box-shadow: 0 0 20px #00e5ff55;
-  }
-  .info { margin-top: 10px; color: #aaa; font-size: 14px; }
-</style>
-</head>
-<body>
-  <h1>⚔️ Üç Yönlü Savaş - İyi & Kötü Olaylar ⚔️</h1>
-  <canvas id="game" width="800" height="600"></canvas>
-  <div class="info">WASD / Ok tuşları: Hareket &nbsp;|&nbsp; SPACE: Ateş &nbsp;|&nbsp; R: Yeniden Başla</div>
+import { useEffect, useRef, useCallback, useState } from 'react';
+// touchShoot is now a ref to prevent re-renders
 
-<script>
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-const W = canvas.width, H = canvas.height;
+interface EventDef {
+  id: string;
+  name: string;
+  duration: number;
+  color: string;
+  desc: string;
+  type: 'good' | 'bad';
+}
 
-let highScore = 0;
-try {
-  const saved = localStorage.getItem('highScore');
-  if (saved !== null) highScore = parseInt(saved) || 0;
-} catch (e) {}
-let newRecord = false;
+interface ActiveEvent {
+  id: string;
+  name: string;
+  color: string;
+  remaining: number;
+  type: string;
+}
 
-const player = {
-  x: W/2, y: H - 80,
-  size: 22, baseSize: 22,
-  speed: 4, baseSpeed: 4,
-  hp: 5, maxHp: 5,
-  cooldown: 0, invuln: 0
-};
+interface Player {
+  x: number;
+  y: number;
+  size: number;
+  baseSize: number;
+  speed: number;
+  baseSpeed: number;
+  hp: number;
+  maxHp: number;
+  cooldown: number;
+  invuln: number;
+}
 
-let bullets = [], enemies = [], particles = [], bossBullets = [];
-let score = 0, gameOver = false, spawnTimer = 0, difficulty = 1;
+interface Bullet {
+  x: number;
+  y: number;
+  speed: number;
+  size: number;
+  color: string;
+}
 
-let boss = null, nextBossAt = 1000, bossLevel = 1;
-let bossWarning = 0, screenShake = 0;
+interface Enemy {
+  x: number;
+  y: number;
+  size: number;
+  speed: number;
+  hp: number;
+  color: string;
+  dir: string;
+}
 
-const GOOD_EVENTS = [
-  { id: 'doubleShot',   name: '🔫 ÇİFT MERMİ',    duration: 600, color: '#ffaa00', desc: 'Aynı anda 2 mermi!', type: 'good' },
-  { id: 'rapidFire',    name: '⚡ HIZLI ATEŞ',    duration: 480, color: '#00ff88', desc: 'Çok hızlı ateş!', type: 'good' },
-  { id: 'shield',       name: '🛡️ KALKAN',         duration: 1,   color: '#00e5ff', desc: 'Bir vuruşu absorbe eder', type: 'good' },
-  { id: 'heal',         name: '❤️ CAN +1',         duration: 1,   color: '#ff3860', desc: 'Canın yenilendi!', type: 'good' },
-  { id: 'slowmo',       name: '🐌 YAVAŞ ZAMAN',   duration: 420, color: '#b388ff', desc: 'Düşmanlar yavaşladı!', type: 'good' },
-  { id: 'bomb',         name: '💣 BOMBA',          duration: 1,   color: '#ff6600', desc: 'Tüm düşmanlar yok!', type: 'good' },
-  { id: 'doubleScore',  name: '✨ 2x SKOR',        duration: 600, color: '#ffff00', desc: 'Çift skor kazanırsın!', type: 'good' },
-  { id: 'ghost',        name: '👻 HAYALET MOD',    duration: 360, color: '#ffffff', desc: 'Hasar almazsın!', type: 'good' }
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  life: number;
+  color: string;
+}
+
+interface BossBullet {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  color: string;
+}
+
+interface Boss {
+  x: number;
+  y: number;
+  size: number;
+  hp: number;
+  maxHp: number;
+  color: string;
+  shootTimer: number;
+  t: number;
+}
+
+const GOOD_EVENTS: EventDef[] = [
+  { id: 'doubleShot', name: '🔫 ÇİFT MERMİ', duration: 600, color: '#ffaa00', desc: 'Aynı anda 2 mermi!', type: 'good' },
+  { id: 'rapidFire', name: '⚡ HIZLI ATEŞ', duration: 480, color: '#00ff88', desc: 'Çok hızlı ateş!', type: 'good' },
+  { id: 'shield', name: '🛡️ KALKAN', duration: 1, color: '#00e5ff', desc: 'Bir vuruşu absorbe eder', type: 'good' },
+  { id: 'heal', name: '❤️ CAN +1', duration: 1, color: '#ff3860', desc: 'Canın yenilendi!', type: 'good' },
+  { id: 'slowmo', name: '🐌 YAVAŞ ZAMAN', duration: 420, color: '#b388ff', desc: 'Düşmanlar yavaşladı!', type: 'good' },
+  { id: 'bomb', name: '💣 BOMBA', duration: 1, color: '#ff6600', desc: 'Tüm düşmanlar yok!', type: 'good' },
+  { id: 'doubleScore', name: '✨ 2x SKOR', duration: 600, color: '#ffff00', desc: 'Çift skor kazanırsın!', type: 'good' },
+  { id: 'ghost', name: '👻 HAYALET MOD', duration: 360, color: '#ffffff', desc: 'Hasar almazsın!', type: 'good' }
 ];
 
-const BAD_EVENTS = [
-  { id: 'reverseControls', name: '🌀 TERS KONTROL',   duration: 480, color: '#ff0000', desc: 'Kontroller ters döndü!', type: 'bad' },
-                 type: "sandbox-runtime-error",
-                payload: {
-                  message: String(event.message).slice(0, 500),
-                  filename: event.filename || "",
-                  lineno: event.lineno || 0,
-                  colno: event.colno || 0,
-                  stack:
-                    event.error && event.error.stack
-                      ? String(event.error.stack).slice(0, 2000)
-                      : ""
-                }
-              },
-              "*"
-            );
-          } catch (e) {
-            /* Reporting failure does not affect page operation */
-          }
+const BAD_EVENTS: EventDef[] = [
+  { id: 'reverseControls', name: '🌀 TERS KONTROL', duration: 480, color: '#ff0000', desc: 'Kontroller ters döndü!', type: 'bad' },
+  { id: 'fog', name: '🌫️ SİS', duration: 600, color: '#666666', desc: 'Görüş alanın azaldı!', type: 'bad' },
+  { id: 'playerSlow', name: '🐌 YAVAŞLAMA', duration: 420, color: '#990000', desc: 'Hareketin yavaşladı!', type: 'bad' },
+  { id: 'damage', name: '💔 CAN -1', duration: 1, color: '#cc0000', desc: '1 can kaybettin!', type: 'bad' },
+  { id: 'shrink', name: '🎯 KÜÇÜLME', duration: 600, color: '#ff3366', desc: 'Boyutun küçüldü!', type: 'bad' },
+  { id: 'enemyRain', name: '🌪️ DÜŞMAN YAĞMURU', duration: 1, color: '#ff6600', desc: 'Çok sayıda düşman!', type: 'bad' },
+  { id: 'slowShoot', name: '🔇 YAVAŞ ATEŞ', duration: 480, color: '#996600', desc: 'Ateş hızın düştü!', type: 'bad' },
+  { id: 'invisible', name: '👁️ GÖRÜNMEZLİK', duration: 480, color: '#333333', desc: 'Düşmanlar görünmez!', type: 'bad' }
+];
+
+export default function Game() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const touchShootRef = useRef(false);
+  const gameRef = useRef<{
+    player: Player;
+    bullets: Bullet[];
+    enemies: Enemy[];
+    particles: Particle[];
+    bossBullets: BossBullet[];
+    boss: Boss | null;
+    score: number;
+    highScore: number;
+    gameOver: boolean;
+    spawnTimer: number;
+    difficulty: number;
+    bossLevel: number;
+    nextBossAt: number;
+    bossWarning: number;
+    screenShake: number;
+    activeEvents: ActiveEvent[];
+    shieldActive: boolean;
+    nextEventAt: number;
+    eventAnnounce: EventDef | null;
+    eventAnnounceTimer: number;
+    controlsReversed: boolean;
+    newRecord: boolean;
+    keys: Record<string, boolean>;
+    animFrameId: number;
+  } | null>(null);
+
+  useEffect(() => {
+    setIsMobile('ontouchstart' in window || navigator.maxTouchPoints > 0);
+  }, []);
+
+  const initGame = useCallback(() => {
+    if (gameRef.current && gameRef.current.animFrameId) {
+      cancelAnimationFrame(gameRef.current.animFrameId);
+    }
+
+    const W = 800;
+    let highScore = 0;
+    try {
+      const saved = localStorage.getItem('highScore');
+      if (saved !== null) highScore = parseInt(saved) || 0;
+    } catch (e) { /* ignore */ }
+
+    gameRef.current = {
+      player: {
+        x: W / 2, y: 520,
+        size: 22, baseSize: 22,
+        speed: 4, baseSpeed: 4,
+        hp: 5, maxHp: 5,
+        cooldown: 0, invuln: 0
+      },
+      bullets: [],
+      enemies: [],
+      particles: [],
+      bossBullets: [],
+      boss: null,
+      score: 0,
+      highScore,
+      gameOver: false,
+      spawnTimer: 0,
+      difficulty: 1,
+      bossLevel: 1,
+      nextBossAt: 1000,
+      bossWarning: 0,
+      screenShake: 0,
+      activeEvents: [],
+      shieldActive: false,
+      nextEventAt: 500,
+      eventAnnounce: null,
+      eventAnnounceTimer: 0,
+      controlsReversed: false,
+      newRecord: false,
+      keys: {},
+      animFrameId: 0
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const W = canvas.width;
+    const H = canvas.height;
+
+    initGame();
+
+    const dist = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+
+    const spawnParticles = (x: number, y: number, color: string, count = 10) => {
+      if (!gameRef.current) return;
+      for (let i = 0; i < count; i++) {
+        gameRef.current.particles.push({
+          x, y,
+          vx: (Math.random() - 0.5) * 5,
+          vy: (Math.random() - 0.5) * 5,
+          life: 30, color
         });
-      })();
-    </script>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-function dist(a, b) { return Math.hypot(a.x - b.x, a.y - b.y); }
+      }
+    };
 
-function spawnParticles(x, y, color, count = 10) {
-  for (let i = 0; i < count; i++) {
-    particles.push({
-      x, y,
-      vx: (Math.random() - 0.5) * 5,
-      vy: (Math.random() - 0.5) * 5,
-      life: 30, color
-    });
-  }
-}
+    const hasEvent = (id: string) => {
+      if (!gameRef.current) return false;
+      return gameRef.current.activeEvents.some(e => e.id === id);
+    };
 
-function applyEvent(evt) {
-  eventAnnounce = evt;
-  eventAnnounceTimer = 150;
-  if (evt.type === 'bad') screenShake = 20;
-  
-  switch (evt.id) {
-    case 'doubleShot': case 'rapidFire': case 'slowmo':
-    case 'doubleScore': case 'ghost': case 'reverseControls':
-    case 'fog': case 'playerSlow': case 'shrink':
-    case 'slowShoot': case 'invisible':
-      activeEvents.push({
-        id: evt.id, name: evt.name, color: evt.color,
-        remaining: evt.duration, type: evt.type
-      });
-      if (evt.id === 'reverseControls') controlsReversed = true;
-      if (evt.id === 'playerSlow') player.speed = player.baseSpeed * 0.5;
-      if (evt.id === 'shrink') player.size = player.baseSize * 0.6;
-      if (evt.id === 'slowShoot') player.cooldown = 30;
-      break;
-    case 'shield':
-      shieldActive = true;
-      spawnParticles(player.x, player.y, '#00e5ff', 30);
-      break;
-    case 'heal':
-      if (player.hp < player.maxHp) {
-        player.hp++;
-        spawnParticles(player.x, player.y, '#ff3860', 25);
+    const spawnEnemy = () => {
+      if (!gameRef.current || gameRef.current.boss) return;
+      const side = Math.floor(Math.random() * 3);
+      let e: Enemy;
+      if (side === 0) {
+        e = {
+          x: Math.random() * (W - 40) + 20, y: -30,
+          size: 20 + Math.random() * 10, speed: 1.2 + Math.random() * 0.8,
+          hp: 2, color: '#ff3860', dir: 'down'
+        };
+      } else if (side === 1) {
+        e = {
+          x: -30, y: Math.random() * (H - 200) + 50,
+          size: 18, speed: 1.8 + Math.random() * 1,
+          hp: 1, color: '#ffaa00', dir: 'right'
+        };
       } else {
-        score += 100;
-        spawnParticles(player.x, player.y, '#ffff00', 25);
+        e = {
+          x: W + 30, y: Math.random() * (H - 200) + 50,
+          size: 18, speed: 1.8 + Math.random() * 1,
+          hp: 1, color: '#b388ff', dir: 'left'
+        };
       }
-      break;
-    case 'bomb':
-      for (const e of enemies) {
-        spawnParticles(e.x, e.y, e.color, 15);
-        score += hasEvent('doubleScore') ? 20 : 10;
+      const speedMult = hasEvent('slowmo') ? 0.4 : 1;
+      e.speed *= Math.min(1 + gameRef.current.difficulty * 0.05, 3) * speedMult;
+      gameRef.current.enemies.push(e);
+    };
+
+    const spawnBoss = () => {
+      if (!gameRef.current) return;
+      const maxHp = 20 + gameRef.current.bossLevel * 10;
+      gameRef.current.boss = {
+        x: W / 2, y: -60,
+        size: 50,
+        hp: maxHp, maxHp,
+        color: '#ff0055',
+        shootTimer: 60, t: 0
+      };
+      gameRef.current.bossWarning = 150;
+      gameRef.current.screenShake = 30;
+    };
+
+    const damagePlayer = () => {
+      if (!gameRef.current) return;
+      const g = gameRef.current;
+      if (hasEvent('ghost')) return;
+      if (g.player.invuln > 5) return;
+      if (g.shieldActive) {
+        g.shieldActive = false;
+        g.player.invuln = 30;
+        spawnParticles(g.player.x, g.player.y, '#00e5ff', 25);
+        return;
       }
-      enemies = [];
-      screenShake = 40;
-      for (let i = 0; i < 50; i++) {
-        particles.push({
-          x: W/2 + (Math.random() - 0.5) * W,
-          y: H/2 + (Math.random() - 0.5) * H,
-          vx: (Math.random() - 0.5) * 10,
-          vy: (Math.random() - 0.5) * 10,
-          life: 40,
-          color: ['#ff6600', '#ffff00', '#ff3860'][Math.floor(Math.random() * 3)]
-        });
+      g.player.hp--;
+      g.player.invuln = 60;
+      g.screenShake = 25;
+      spawnParticles(g.player.x, g.player.y, '#ff0000', 30);
+      if (g.player.hp <= 0) {
+        g.gameOver = true;
+        if (g.score > g.highScore) {
+          g.highScore = g.score;
+          g.newRecord = true;
+          try { localStorage.setItem('highScore', g.highScore.toString()); } catch (e) { /* ignore */ }
+        }
       }
-      break;
-    case 'damage':
-      if (player.invuln <= 0) {
-        if (!hasEvent('ghost') && !shieldActive) {
-          player.hp--;
-          player.invuln = 60;
-          spawnParticles(player.x, player.y, '#ff0000', 30);
-          screenShake = 25;
-          if (player.hp <= 0) {
-            gameOver = true;
-            if (score > highScore) {
-              highScore = score; newRecord = true;
-              try { localStorage.setItem('highScore', highScore); } catch (e) {}
+    };
+
+    const applyEvent = (evt: EventDef) => {
+      if (!gameRef.current) return;
+      const g = gameRef.current;
+      g.eventAnnounce = evt;
+      g.eventAnnounceTimer = 150;
+      if (evt.type === 'bad') g.screenShake = 20;
+
+      switch (evt.id) {
+        case 'doubleShot': case 'rapidFire': case 'slowmo':
+        case 'doubleScore': case 'ghost': case 'reverseControls':
+        case 'fog': case 'playerSlow': case 'shrink':
+        case 'slowShoot': case 'invisible':
+          g.activeEvents.push({
+            id: evt.id, name: evt.name, color: evt.color,
+            remaining: evt.duration, type: evt.type
+          });
+          if (evt.id === 'reverseControls') g.controlsReversed = true;
+          if (evt.id === 'playerSlow') g.player.speed = g.player.baseSpeed * 0.5;
+          if (evt.id === 'shrink') g.player.size = g.player.baseSize * 0.6;
+          if (evt.id === 'slowShoot') g.player.cooldown = 30;
+          break;
+        case 'shield':
+          g.shieldActive = true;
+          spawnParticles(g.player.x, g.player.y, '#00e5ff', 30);
+          break;
+        case 'heal':
+          if (g.player.hp < g.player.maxHp) {
+            g.player.hp++;
+            spawnParticles(g.player.x, g.player.y, '#ff3860', 25);
+          } else {
+            g.score += 100;
+            spawnParticles(g.player.x, g.player.y, '#ffff00', 25);
+          }
+          break;
+        case 'bomb':
+          for (const e of g.enemies) {
+            spawnParticles(e.x, e.y, e.color, 15);
+            g.score += hasEvent('doubleScore') ? 20 : 10;
+          }
+          g.enemies = [];
+          g.screenShake = 40;
+          for (let i = 0; i < 50; i++) {
+            g.particles.push({
+              x: W / 2 + (Math.random() - 0.5) * W,
+              y: H / 2 + (Math.random() - 0.5) * H,
+              vx: (Math.random() - 0.5) * 10,
+              vy: (Math.random() - 0.5) * 10,
+              life: 40,
+              color: ['#ff6600', '#ffff00', '#ff3860'][Math.floor(Math.random() * 3)]
+            });
+          }
+          break;
+        case 'damage':
+          if (!hasEvent('ghost')) {
+            if (!g.shieldActive) {
+              g.player.hp--;
+              g.player.invuln = 60;
+              spawnParticles(g.player.x, g.player.y, '#ff0000', 30);
+              g.screenShake = 25;
+              if (g.player.hp <= 0) {
+                g.gameOver = true;
+                if (g.score > g.highScore) {
+                  g.highScore = g.score; g.newRecord = true;
+                  try { localStorage.setItem('highScore', g.highScore.toString()); } catch (e) { /* ignore */ }
+                }
+              }
+            } else {
+              g.shieldActive = false;
+              spawnParticles(g.player.x, g.player.y, '#00e5ff', 25);
             }
           }
-        } else if (shieldActive) {
-          shieldActive = false;
-          spawnParticles(player.x, player.y, '#00e5ff', 25);
+          break;
+        case 'enemyRain':
+          for (let i = 0; i < 8; i++) setTimeout(() => spawnEnemy(), i * 100);
+          g.screenShake = 15;
+          break;
+      }
+    };
+
+    const triggerRandomEvent = () => {
+      const isGood = Math.random() < 0.6;
+      const pool = isGood ? GOOD_EVENTS : BAD_EVENTS;
+      applyEvent(pool[Math.floor(Math.random() * pool.length)]);
+    };
+
+    const shoot = () => {
+      if (!gameRef.current) return;
+      const g = gameRef.current;
+      if (g.player.cooldown > 0) return;
+      const rapid = hasEvent('rapidFire');
+      g.player.cooldown = hasEvent('slowShoot') ? 30 : (rapid ? 5 : 12);
+      const color = hasEvent('doubleShot') ? '#ffaa00' : '#00e5ff';
+      if (hasEvent('doubleShot')) {
+        g.bullets.push({ x: g.player.x - 10, y: g.player.y - g.player.size, speed: 7, size: 4, color });
+        g.bullets.push({ x: g.player.x + 10, y: g.player.y - g.player.size, speed: 7, size: 4, color });
+      } else {
+        g.bullets.push({ x: g.player.x, y: g.player.y - g.player.size, speed: 7, size: 4, color });
+      }
+      spawnParticles(g.player.x, g.player.y - g.player.size, color, 2);
+    };
+
+    const updateParticles = () => {
+      if (!gameRef.current) return;
+      gameRef.current.particles = gameRef.current.particles.filter(p => {
+        p.x += p.vx; p.y += p.vy; p.vx *= 0.98; p.vy *= 0.98; p.life--;
+        return p.life > 0;
+      });
+    };
+
+    const update = () => {
+      if (!gameRef.current) return;
+      const g = gameRef.current;
+
+      updateParticles();
+      if (g.bossWarning > 0) g.bossWarning--;
+      if (g.screenShake > 0) g.screenShake--;
+      if (g.eventAnnounceTimer > 0) g.eventAnnounceTimer--;
+
+      if (g.gameOver) return;
+
+      g.activeEvents = g.activeEvents.filter(ev => {
+        ev.remaining--;
+        if (ev.remaining <= 0) {
+          if (ev.id === 'reverseControls') g.controlsReversed = false;
+          if (ev.id === 'playerSlow') g.player.speed = g.player.baseSpeed;
+          if (ev.id === 'shrink') g.player.size = g.player.baseSize;
+          return false;
+        }
+        return true;
+      });
+
+      if (g.score >= g.nextEventAt) {
+        triggerRandomEvent();
+        g.nextEventAt += 500;
+      }
+
+      if (!g.boss && g.score >= g.nextBossAt) spawnBoss();
+      if (g.boss && g.score >= g.nextBossAt) g.nextBossAt += 1000;
+
+      let dx = 0, dy = 0;
+      if (g.keys['a'] || g.keys['arrowleft']) dx -= 1;
+      if (g.keys['d'] || g.keys['arrowright']) dx += 1;
+      if (g.keys['w'] || g.keys['arrowup']) dy -= 1;
+      if (g.keys['s'] || g.keys['arrowdown']) dy += 1;
+      if (g.controlsReversed) { dx = -dx; dy = -dy; }
+      if (dx !== 0 || dy !== 0) {
+        const len = Math.hypot(dx, dy);
+        g.player.x += (dx / len) * g.player.speed;
+        g.player.y += (dy / len) * g.player.speed;
+      }
+      g.player.x = Math.max(g.player.size, Math.min(W - g.player.size, g.player.x));
+      g.player.y = Math.max(g.player.size, Math.min(H - g.player.size, g.player.y));
+
+      if (g.keys[' '] || touchShootRef.current) shoot();
+      if (g.player.cooldown > 0) g.player.cooldown--;
+      if (g.player.invuln > 0) g.player.invuln--;
+
+      g.difficulty = 1 + Math.floor(g.score / 400);
+      if (!g.boss) {
+        g.spawnTimer--;
+        if (g.spawnTimer <= 0) {
+          spawnEnemy();
+          g.spawnTimer = Math.max(18, 70 - g.difficulty * 4);
         }
       }
-      break;
-    case 'enemyRain':
-      for (let i = 0; i < 8; i++) setTimeout(() => spawnEnemy(), i * 100);
-      screenShake = 15;
-      break;
-  }
-}
 
-function hasEvent(id) { return activeEvents.some(e => e.id === id); }
-
-function triggerRandomEvent() {
-  const isGood = Math.random() < 0.6;
-  const pool = isGood ? GOOD_EVENTS : BAD_EVENTS;
-  applyEvent(pool[Math.floor(Math.random() * pool.length)]);
-}
-
-function spawnEnemy() {
-  if (boss) return;
-  const side = Math.floor(Math.random() * 3);
-  let e;
-  if (side === 0) {
-    e = { x: Math.random() * (W - 40) + 20, y: -30,
-      size: 20 + Math.random() * 10, speed: 1.2 + Math.random() * 0.8,
-      hp: 2, color: '#ff3860', dir: 'down' };
-  } else if (side === 1) {
-    e = { x: -30, y: Math.random() * (H - 200) + 50,
-      size: 18, speed: 1.8 + Math.random() * 1,
-      hp: 1, color: '#ffaa00', dir: 'right' };
-  } else {
-    e = { x: W + 30, y: Math.random() * (H - 200) + 50,
-      size: 18, speed: 1.8 + Math.random() * 1,
-      hp: 1, color: '#b388ff', dir: 'left' };
-  }
-  let speedMult = hasEvent('slowmo') ? 0.4 : 1;
-  e.speed *= Math.min(1 + difficulty * 0.05, 3) * speedMult;
-  enemies.push(e);
-}
-
-function spawnBoss() {
-  const maxHp = 20 + bossLevel * 10;
-  boss = {
-    x: W / 2, y: -60,
-    size: 50,
-    hp: maxHp, maxHp,
-    color: '#ff0055',
-    shootTimer: 60, t: 0
-  };
-  bossWarning = 150;
-  screenShake = 30;
-}
-
-function shoot() {
-  if (player.cooldown > 0) return;
-  const rapid = hasEvent('rapidFire');
-  player.cooldown = hasEvent('slowShoot') ? 30 : (rapid ? 5 : 12);
-  const color = hasEvent('doubleShot') ? '#ffaa00' : '#00e5ff';
-  if (hasEvent('doubleShot')) {
-    bullets.push({ x: player.x - 10, y: player.y - player.size, speed: 7, size: 4, color });
-    bullets.push({ x: player.x + 10, y: player.y - player.size, speed: 7, size: 4, color });
-  } else {
-    bullets.push({ x: player.x, y: player.y - player.size, speed: 7, size: 4, color });
-  }
-  spawnParticles(player.x, player.y - player.size, color, 2);
-}
-
-function damagePlayer() {
-  if (player.invuln > 0 || hasEvent('ghost')) return;
-  if (shieldActive) {
-    shieldActive = false;
-    player.invuln = 30;
-    spawnParticles(player.x, player.y, '#00e5ff', 25);
-    return;
-  }
-  player.hp--;
-  player.invuln = 90;
-  screenShake = 25;
-  spawnParticles(player.x, player.y, '#ff0000', 30);
-  if (player.hp <= 0) {
-    gameOver = true;
-    if (score > highScore) {
-      highScore = score; newRecord = true;
-      try { localStorage.setItem('highScore', highScore); } catch (e) {}
-    }
-  }
-}
-
-function updateParticles() {
-  particles = particles.filter(p => {
-    p.x += p.vx; p.y += p.vy; p.vx *= 0.98; p.vy *= 0.98; p.life--;
-    return p.life > 0;
-  });
-}
-
-function update() {
-  updateParticles();
-  if (bossWarning > 0) bossWarning--;
-  if (screenShake > 0) screenShake--;
-  if (eventAnnounceTimer > 0) eventAnnounceTimer--;
-
-  if (gameOver) return;
-
-  // --- olay süreleri ---
-  activeEvents = activeEvents.filter(ev => {
-    ev.remaining--;
-    if (ev.remaining <= 0) {
-      if (ev.id === 'reverseControls') controlsReversed = false;
-      if (ev.id === 'playerSlow') player.speed = player.baseSpeed;
-      if (ev.id === 'shrink') player.size = player.baseSize;
-      return false;
-    }
-    return true;
-  });
-
-  // --- skor olayları (her 500 puanda) ---
-  if (score >= nextEventAt) {
-    triggerRandomEvent();
-    nextEventAt += 500;
-  }
-
-  // --- boss (her 1000 puanda) ---
-  if (!boss && score >= nextBossAt) spawnBoss();
-  if (boss && score >= nextBossAt) nextBossAt += 1000;
-
-  // --- oyuncu hareketi ---
-  let dx = 0, dy = 0;
-  if (keys['a'] || keys['arrowleft']) dx -= 1;
-  if (keys['d'] || keys['arrowright']) dx += 1;
-  if (keys['w'] || keys['arrowup']) dy -= 1;
-  if (keys['s'] || keys['arrowdown']) dy += 1;
-  if (controlsReversed) { dx = -dx; dy = -dy; }
-  if (dx !== 0 || dy !== 0) {
-    const len = Math.hypot(dx, dy);
-    player.x += (dx / len) * player.speed;
-    player.y += (dy / len) * player.speed;
-  }
-  player.x = Math.max(player.size, Math.min(W - player.size, player.x));
-  player.y = Math.max(player.size, Math.min(H - player.size, player.y));
-
-  if (keys[' ']) shoot();
-  if (player.cooldown > 0) player.cooldown--;
-  if (player.invuln > 0) player.invuln--;
-
-  // --- düşman üretimi ---
-  difficulty = 1 + Math.floor(score / 400);
-  if (!boss) {
-    spawnTimer--;
-    if (spawnTimer <= 0) {
-      spawnEnemy();
-      spawnTimer = Math.max(18, 70 - difficulty * 4);
-    }
-  }
-
-  // --- mermiler ---
-  bullets = bullets.filter(b => {
-    b.y -= b.speed;
-    if (b.y < -10) return false;
-    for (const e of enemies) {
-      if (dist(b, e) < e.size / 2 + b.size) {
-        e.hp--;
-        spawnParticles(b.x, b.y, e.color, 5);
-        if (e.hp <= 0) {
-          spawnParticles(e.x, e.y, e.color, 15);
-          score += hasEvent('doubleScore') ? 20 : 10;
+      g.bullets = g.bullets.filter(b => {
+        b.y -= b.speed;
+        if (b.y < -10) return false;
+        for (const e of g.enemies) {
+          if (dist(b, e) < e.size / 2 + b.size) {
+            e.hp--;
+            spawnParticles(b.x, b.y, e.color, 5);
+            if (e.hp <= 0) {
+              spawnParticles(e.x, e.y, e.color, 15);
+              g.score += hasEvent('doubleScore') ? 20 : 10;
+            }
+            return false;
+          }
         }
-        return false;
+        if (g.boss && dist(b, g.boss) < g.boss.size / 2 + b.size) {
+          g.boss.hp--;
+          spawnParticles(b.x, b.y, g.boss.color, 5);
+          if (g.boss.hp <= 0) {
+            spawnParticles(g.boss.x, g.boss.y, g.boss.color, 60);
+            g.score += (300 + g.bossLevel * 200) * (hasEvent('doubleScore') ? 2 : 1);
+            g.boss = null;
+            g.bossLevel++;
+            g.screenShake = 40;
+          }
+          return false;
+        }
+        return true;
+      });
+      g.enemies = g.enemies.filter(e => e.hp > 0);
+
+      g.enemies = g.enemies.filter(e => {
+        e.x += e.dir === 'left' ? -e.speed : e.dir === 'right' ? e.speed : 0;
+        e.y += e.dir === 'down' ? e.speed : 0;
+        if (e.y > H + 40 || e.x < -40 || e.x > W + 40) return false;
+        if (dist(e, g.player) < e.size / 2 + g.player.size / 2) {
+          damagePlayer();
+          spawnParticles(e.x, e.y, e.color, 10);
+          return false;
+        }
+        return true;
+      });
+
+      if (g.boss) {
+        g.boss.t++;
+        if (g.boss.y < 90) g.boss.y += 1.5;
+        else g.boss.x = W / 2 + Math.sin(g.boss.t * 0.02) * (W / 2 - 80);
+        g.boss.shootTimer--;
+        if (g.boss.shootTimer <= 0) {
+          g.boss.shootTimer = Math.max(25, 70 - g.bossLevel * 8);
+          const ang = Math.atan2(g.player.y - g.boss.y, g.player.x - g.boss.x);
+          for (let i = -1; i <= 1; i++) {
+            g.bossBullets.push({
+              x: g.boss.x, y: g.boss.y + 20,
+              vx: Math.cos(ang + i * 0.25) * 3.5,
+              vy: Math.sin(ang + i * 0.25) * 3.5,
+              size: 6, color: '#ff0055'
+            });
+          }
+        }
       }
-    }
-    if (boss && dist(b, boss) < boss.size / 2 + b.size) {
-      boss.hp--;
-      spawnParticles(b.x, b.y, boss.color, 5);
-      if (boss.hp <= 0) {
-        spawnParticles(boss.x, boss.y, boss.color, 60);
-        score += (300 + bossLevel * 200) * (hasEvent('doubleScore') ? 2 : 1);
-        boss = null;
-        bossLevel++;
-        screenShake = 40;
+
+      g.bossBullets = g.bossBullets.filter(b => {
+        b.x += b.vx; b.y += b.vy;
+        if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) return false;
+        if (dist(b, g.player) < b.size + g.player.size / 2) {
+          damagePlayer();
+          return false;
+        }
+        return true;
+      });
+    };
+
+    const draw = () => {
+      if (!gameRef.current) return;
+      const g = gameRef.current;
+
+      ctx.save();
+      if (g.screenShake > 0) {
+        ctx.translate((Math.random() - 0.5) * g.screenShake, (Math.random() - 0.5) * g.screenShake);
       }
-      return false;
-    }
-    return true;
-  });
-  enemies = enemies.filter(e => e.hp > 0);
+      ctx.clearRect(-50, -50, W + 100, H + 100);
 
-  // --- düşman hareketi ve çarpışma ---
-  enemies = enemies.filter(e => {
-    e.x += e.dir === 'left' ? -e.speed : e.dir === 'right' ? e.speed : 0;
-    e.y += e.dir === 'down' ? e.speed : 0;
-    if (e.y > H + 40 || e.x < -40 || e.x > W + 40) return false;
-    if (dist(e, player) < e.size / 2 + player.size / 2) {
-      damagePlayer();
-      spawnParticles(e.x, e.y, e.color, 10);
-      return false;
-    }
-    return true;
-  });
-
-  // --- boss hareketi ve ateşi ---
-  if (boss) {
-    boss.t++;
-    if (boss.y < 90) boss.y += 1.5;
-    else boss.x = W / 2 + Math.sin(boss.t * 0.02) * (W / 2 - 80);
-    boss.shootTimer--;
-    if (boss.shootTimer <= 0) {
-      boss.shootTimer = Math.max(25, 70 - bossLevel * 8);
-      const ang = Math.atan2(player.y - boss.y, player.x - boss.x);
-      for (let i = -1; i <= 1; i++) {
-        bossBullets.push({
-          x: boss.x, y: boss.y + 20,
-          vx: Math.cos(ang + i * 0.25) * 3.5,
-          vy: Math.sin(ang + i * 0.25) * 3.5,
-          size: 6, color: '#ff0055'
-        });
+      // Background stars
+      ctx.fillStyle = '#ffffff10';
+      for (let i = 0; i < 50; i++) {
+        const sx = (i * 137.5 + g.score * 0.1) % W;
+        const sy = (i * 97.3) % H;
+        ctx.fillRect(sx, sy, 1, 1);
       }
+
+      if (!(g.player.invuln > 0 && Math.floor(g.player.invuln / 5) % 2 === 0)) {
+        ctx.globalAlpha = hasEvent('ghost') ? 0.45 : 1;
+        ctx.fillStyle = '#00e5ff';
+        ctx.beginPath();
+        ctx.moveTo(g.player.x, g.player.y - g.player.size);
+        ctx.lineTo(g.player.x - g.player.size * 0.8, g.player.y + g.player.size * 0.8);
+        ctx.lineTo(g.player.x + g.player.size * 0.8, g.player.y + g.player.size * 0.8);
+        ctx.closePath();
+        ctx.fill();
+        // Engine glow
+        ctx.fillStyle = '#00e5ff44';
+        ctx.beginPath();
+        ctx.arc(g.player.x, g.player.y + g.player.size, 8, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      if (g.shieldActive) {
+        ctx.strokeStyle = '#00e5ff';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(g.player.x, g.player.y, g.player.size + 10, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      for (const b of g.bullets) {
+        ctx.fillStyle = b.color;
+        ctx.shadowColor = b.color;
+        ctx.shadowBlur = 8;
+        ctx.fillRect(b.x - b.size / 2, b.y - b.size * 1.5, b.size, b.size * 3);
+        ctx.shadowBlur = 0;
+      }
+      for (const b of g.bossBullets) {
+        ctx.fillStyle = b.color;
+        ctx.shadowColor = b.color;
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+
+      const invis = hasEvent('invisible');
+      for (const e of g.enemies) {
+        ctx.globalAlpha = invis ? 0.12 : 1;
+        ctx.fillStyle = e.color;
+        ctx.shadowColor = e.color;
+        ctx.shadowBlur = 6;
+        ctx.beginPath();
+        ctx.arc(e.x, e.y, e.size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+      }
+
+      if (g.boss) {
+        ctx.fillStyle = g.boss.color;
+        ctx.shadowColor = g.boss.color;
+        ctx.shadowBlur = 15;
+        ctx.fillRect(g.boss.x - g.boss.size / 2, g.boss.y - g.boss.size / 2, g.boss.size, g.boss.size);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 20px Segoe UI';
+        ctx.textAlign = 'center';
+        ctx.fillText('👾', g.boss.x, g.boss.y + 7);
+        ctx.fillStyle = '#333';
+        ctx.fillRect(W / 2 - 150, 12, 300, 14);
+        ctx.fillStyle = '#ff0055';
+        ctx.fillRect(W / 2 - 150, 12, 300 * (g.boss.hp / g.boss.maxHp), 14);
+        ctx.strokeStyle = '#fff';
+        ctx.strokeRect(W / 2 - 150, 12, 300, 14);
+      }
+
+      for (const p of g.particles) {
+        ctx.globalAlpha = p.life / 30;
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+      }
+      ctx.globalAlpha = 1;
+
+      if (hasEvent('fog')) {
+        const grad = ctx.createRadialGradient(g.player.x, g.player.y, 60, g.player.x, g.player.y, 260);
+        grad.addColorStop(0, 'rgba(10,10,26,0)');
+        grad.addColorStop(1, 'rgba(10,10,26,0.95)');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px Segoe UI';
+      ctx.fillText('Skor: ' + g.score, 14, 30);
+      ctx.fillStyle = '#aaa';
+      ctx.font = '14px Segoe UI';
+      ctx.fillText('Rekor: ' + g.highScore, 14, 52);
+      for (let i = 0; i < g.player.maxHp; i++) {
+        ctx.fillStyle = i < g.player.hp ? '#ff3860' : '#442233';
+        ctx.font = '18px Segoe UI';
+        ctx.fillText('❤️', 14 + i * 24, 80);
+      }
+
+      ctx.textAlign = 'right';
+      ctx.font = '13px Segoe UI';
+      g.activeEvents.forEach((ev, i) => {
+        ctx.fillStyle = ev.color;
+        ctx.fillText(ev.name + ' ' + Math.ceil(ev.remaining / 60) + 's', W - 14, 30 + i * 20);
+      });
+
+      if (g.bossWarning > 0) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = Math.floor(g.bossWarning / 10) % 2 === 0 ? '#ff0055' : '#fff';
+        ctx.font = 'bold 40px Segoe UI';
+        ctx.fillText('⚠️ BOSS GELİYOR ⚠️', W / 2, H / 2 - 40);
+      }
+
+      if (g.eventAnnounce && g.eventAnnounceTimer > 0) {
+        ctx.globalAlpha = Math.min(1, g.eventAnnounceTimer / 40);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = g.eventAnnounce.color;
+        ctx.font = 'bold 32px Segoe UI';
+        ctx.fillText(g.eventAnnounce.name, W / 2, H / 2 - 80);
+        ctx.font = '16px Segoe UI';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(g.eventAnnounce.desc, W / 2, H / 2 - 52);
+        ctx.globalAlpha = 1;
+      }
+
+      if (g.gameOver) {
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ff3860';
+        ctx.font = 'bold 48px Segoe UI';
+        ctx.fillText('OYUN BİTTİ', W / 2, H / 2 - 40);
+        ctx.fillStyle = '#fff';
+        ctx.font = '22px Segoe UI';
+        ctx.fillText('Skor: ' + g.score, W / 2, H / 2 + 5);
+        if (g.newRecord) {
+          ctx.fillStyle = '#ffff00';
+          ctx.font = 'bold 22px Segoe UI';
+          ctx.fillText('🎉 YENİ REKOR! 🎉', W / 2, H / 2 + 40);
+        }
+        ctx.fillStyle = '#aaa';
+        ctx.font = '18px Segoe UI';
+        ctx.fillText("R'ye basarak yeniden başla", W / 2, H / 2 + 80);
+      }
+
+      ctx.restore();
+    };
+
+    const loop = () => {
+      if (!gameRef.current) return;
+      update();
+      draw();
+      if (gameRef.current) {
+        gameRef.current.animFrameId = requestAnimationFrame(loop);
+      }
+    };
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!gameRef.current) return;
+      gameRef.current.keys[e.key.toLowerCase()] = true;
+      if (e.key === ' ') e.preventDefault();
+      if (gameRef.current.gameOver && e.key.toLowerCase() === 'r') {
+        initGame();
+        if (gameRef.current) {
+          gameRef.current.animFrameId = requestAnimationFrame(loop);
+        }
+      }
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!gameRef.current) return;
+      gameRef.current.keys[e.key.toLowerCase()] = false;
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    canvas.focus();
+
+    const g = gameRef.current;
+    if (g) {
+      g.animFrameId = requestAnimationFrame(loop);
     }
-  }
 
-  // --- boss mermileri ---
-  bossBullets = bossBullets.filter(b => {
-    b.x += b.vx; b.y += b.vy;
-    if (b.x < -20 || b.x > W + 20 || b.y < -20 || b.y > H + 20) return false;
-    if (dist(b, player) < b.size + player.size / 2) {
-      damagePlayer();
-      return false;
-    }
-    return true;
-  });
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+      if (gameRef.current) {
+        cancelAnimationFrame(gameRef.current.animFrameId);
+      }
+    };
+  }, [initGame]);
+
+  return (
+    <div className="flex flex-col items-center">
+      <canvas
+        ref={canvasRef}
+        width={800}
+        height={600}
+        tabIndex={0}
+        onClick={(e) => (e.target as HTMLCanvasElement).focus()}
+        className="border-2 border-cyan-400 rounded-lg shadow-[0_0_20px_rgba(0,229,255,0.33)] bg-[#111] outline-none max-w-full"
+        style={{ imageRendering: 'pixelated' }}
+      />
+      {isMobile && (
+        <div className="mt-4 flex gap-4">
+          <button
+            onTouchStart={() => { touchShootRef.current = true; }}
+            onTouchEnd={() => { touchShootRef.current = false; }}
+            onMouseDown={() => { touchShootRef.current = true; }}
+            onMouseUp={() => { touchShootRef.current = false; }}
+            className="bg-red-500 hover:bg-red-600 text-white font-bold text-xl px-8 py-4 rounded-lg shadow-lg active:scale-95 transition-transform select-none"
+          >
+            🔫 ATEŞ
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
-
-function draw() {
-  ctx.save();
-  if (screenShake > 0) {
-    ctx.translate((Math.random() - 0.5) * screenShake, (Math.random() - 0.5) * screenShake);
-  }
-  ctx.clearRect(-50, -50, W + 100, H + 100);
-
-  // oyuncu
-  if (!(player.invuln > 0 && Math.floor(player.invuln / 5) % 2 === 0)) {
-    ctx.globalAlpha = hasEvent('ghost') ? 0.45 : 1;
-    ctx.fillStyle = '#00e5ff';
-    ctx.beginPath();
-    ctx.moveTo(player.x, player.y - player.size);
-    ctx.lineTo(player.x - player.size * 0.8, player.y + player.size * 0.8);
-    ctx.lineTo(player.x + player.size * 0.8, player.y + player.size * 0.8);
-    ctx.closePath();
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-  if (shieldActive) {
-    ctx.strokeStyle = '#00e5ff';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(player.x, player.y, player.size + 10, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // mermiler
-  for (const b of bullets) {
-    ctx.fillStyle = b.color;
-    ctx.fillRect(b.x - b.size / 2, b.y - b.size * 1.5, b.size, b.size * 3);
-  }
-  for (const b of bossBullets) {
-    ctx.fillStyle = b.color;
-    ctx.beginPath();
-    ctx.arc(b.x, b.y, b.size, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // düşmanlar
-  const invis = hasEvent('invisible');
-  for (const e of enemies) {
-    ctx.globalAlpha = invis ? 0.12 : 1;
-    ctx.fillStyle = e.color;
-    ctx.beginPath();
-    ctx.arc(e.x, e.y, e.size / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
-  // boss
-  if (boss) {
-    ctx.fillStyle = boss.color;
-    ctx.fillRect(boss.x - boss.size / 2, boss.y - boss.size / 2, boss.size, boss.size);
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 20px Segoe UI';
-    ctx.textAlign = 'center';
-    ctx.fillText('👾', boss.x, boss.y + 7);
-    // boss can barı
-    ctx.fillStyle = '#333';
-    ctx.fillRect(W / 2 - 150, 12, 300, 14);
-    ctx.fillStyle = '#ff0055';
-    ctx.fillRect(W / 2 - 150, 12, 300 * (boss.hp / boss.maxHp), 14);
-    ctx.strokeStyle = '#fff';
-    ctx.strokeRect(W / 2 - 150, 12, 300, 14);
-  }
-
-  // parçacıklar
-  for (const p of particles) {
-    ctx.globalAlpha = p.life / 30;
-    ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
-  }
-  ctx.globalAlpha = 1;
-
-  // sis olayı
-  if (hasEvent('fog')) {
-    const g = ctx.createRadialGradient(player.x, player.y, 60, player.x, player.y, 260);
-    g.addColorStop(0, 'rgba(10,10,26,0)');
-    g.addColorStop(1, 'rgba(10,10,26,0.95)');
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, W, H);
-  }
-
-  // HUD
-  ctx.textAlign = 'left';
-  ctx.fillStyle = '#fff';
-  ctx.font = 'bold 18px Segoe UI';
-  ctx.fillText('Skor: ' + score, 14, 30);
-  ctx.fillStyle = '#aaa';
-  ctx.font = '14px Segoe UI';
-  ctx.fillText('Rekor: ' + highScore, 14, 52);
-  for (let i = 0; i < player.maxHp; i++) {
-    ctx.fillStyle = i < player.hp ? '#ff3860' : '#442233';
-    ctx.font = '18px Segoe UI';
-    ctx.fillText('❤️', 14 + i * 24, 80);
-  }
-
-  // aktif olaylar
-  ctx.textAlign = 'right';
-  ctx.font = '13px Segoe UI';
-  activeEvents.forEach((ev, i) => {
-    ctx.fillStyle = ev.color;
-    ctx.fillText(ev.name + ' ' + Math.ceil(ev.remaining / 60) + 's', W - 14, 30 + i * 20);
-  });
-
-  // boss uyarısı
-  if (bossWarning > 0) {
-    ctx.textAlign = 'center';
-    ctx.fillStyle = Math.floor(bossWarning / 10) % 2 === 0 ? '#ff0055' : '#fff';
-    ctx.font = 'bold 40px Segoe UI';
-    ctx.fillText('⚠️ BOSS GELİYOR ⚠️', W / 2, H / 2 - 40);
-  }
-
-  // olay duyurusu
-  if (eventAnnounce && eventAnnounceTimer > 0) {
-    ctx.globalAlpha = Math.min(1, eventAnnounceTimer / 40);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = eventAnnounce.color;
-    ctx.font = 'bold 32px Segoe UI';
-    ctx.fillText(eventAnnounce.name, W / 2, H / 2 - 80);
-    ctx.font = '16px Segoe UI';
-    ctx.fillStyle = '#fff';
-    ctx.fillText(eventAnnounce.desc, W / 2, H / 2 - 52);
-    ctx.globalAlpha = 1;
-  }
-
-  // oyun bitti ekranı
-  if (gameOver) {
-    ctx.fillStyle = 'rgba(0,0,0,0.75)';
-    ctx.fillRect(0, 0, W, H);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = '#ff3860';
-    ctx.font = 'bold 48px Segoe UI';
-    ctx.fillText('OYUN BİTTİ', W / 2, H / 2 - 40);
-    ctx.fillStyle = '#fff';
-    ctx.font = '22px Segoe UI';
-    ctx.fillText('Skor: ' + score, W / 2, H / 2 + 5);
-    if (newRecord) {
-      ctx.fillStyle = '#ffff00';
-      ctx.font = 'bold 22px Segoe UI';
-      ctx.fillText('🎉 YENİ REKOR! 🎉', W / 2, H / 2 + 40);
-    }
-    ctx.fillStyle = '#aaa';
-    ctx.font = '18px Segoe UI';
-    ctx.fillText("R'ye basarak yeniden başla", W / 2, H / 2 + 80);
-  }
-
-  ctx.restore();
-}
-
-function loop() {
-  update();
-  draw();
-  requestAnimationFrame(loop);
-}
-loop();
-</script>
-</body>
-</html>
